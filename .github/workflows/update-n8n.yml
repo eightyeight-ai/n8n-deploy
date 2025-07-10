@@ -1,0 +1,69 @@
+name: Check for n8n Updates
+
+on:
+  schedule:
+    # Check for updates every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Get current n8n version from render.yaml
+      id: current_version
+      run: |
+        # Extract version from render.yaml (assumes format like n8n:latest or n8n:1.80.3)
+        current=$(grep "url: docker.io/n8nio/n8n" render.yaml | grep -o 'n8n:.*' | cut -d':' -f2)
+        echo "version=$current" >> $GITHUB_OUTPUT
+        
+    - name: Get latest n8n version from GitHub API
+      id: latest_version
+      run: |
+        # Get latest stable release from n8n GitHub
+        latest=$(curl -s https://api.github.com/repos/n8n-io/n8n/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/n8n@//')
+        echo "version=$latest" >> $GITHUB_OUTPUT
+        
+    - name: Compare versions and update if needed
+      if: steps.current_version.outputs.version == 'latest' || steps.current_version.outputs.version != steps.latest_version.outputs.version
+      run: |
+        echo "Current version: ${{ steps.current_version.outputs.version }}"
+        echo "Latest version: ${{ steps.latest_version.outputs.version }}"
+        
+        # Update render.yaml with specific version
+        sed -i "s/url: docker.io\/n8nio\/n8n:.*/url: docker.io\/n8nio\/n8n:${{ steps.latest_version.outputs.version }}/" render.yaml
+        
+    - name: Create Pull Request
+      if: steps.current_version.outputs.version == 'latest' || steps.current_version.outputs.version != steps.latest_version.outputs.version
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: "Update n8n to v${{ steps.latest_version.outputs.version }}"
+        title: "Auto-update n8n to v${{ steps.latest_version.outputs.version }}"
+        body: |
+          🤖 **Automated n8n Update**
+          
+          This PR updates n8n from `${{ steps.current_version.outputs.version }}` to `${{ steps.latest_version.outputs.version }}`.
+          
+          **Changes:**
+          - Updated render.yaml to use n8n v${{ steps.latest_version.outputs.version }}
+          
+          **Before merging:**
+          - [ ] Check [release notes](https://github.com/n8n-io/n8n/releases/tag/n8n@${{ steps.latest_version.outputs.version }})
+          - [ ] Review any breaking changes
+          - [ ] Ensure your workflows are compatible
+          
+          **To deploy:** Merge this PR and Render will automatically deploy the update.
+          
+          ---
+          *This PR was automatically created by GitHub Actions*
+        branch: update-n8n-v${{ steps.latest_version.outputs.version }}
+        
+    - name: No update needed
+      if: steps.current_version.outputs.version != 'latest' && steps.current_version.outputs.version == steps.latest_version.outputs.version
+      run: |
+        echo "✅ n8n is already up to date (v${{ steps.current_version.outputs.version }})"
